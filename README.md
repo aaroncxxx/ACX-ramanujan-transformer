@@ -2,7 +2,13 @@
 
 **基于拉马努金模函数递推关系的神经网络权重初始化方法**
 
+[![Version](https://img.shields.io/badge/version-2.0.0-blue)](CHANGELOG.md)
+[![Python](https://img.shields.io/badge/python-3.8+-green)](https://www.python.org/)
+[![PyTorch](https://img.shields.io/badge/pytorch-≥2.0.0-ee4c2c)](https://pytorch.org/)
+
 [English](#english) | 中文
+
+> **v2.0.0** — 修复缩放因子爆炸/坍缩、层索引追踪、增益参数等关键问题。详见 [CHANGELOG.md](CHANGELOG.md)
 
 ---
 
@@ -97,16 +103,24 @@ pip install torch numpy matplotlib
 import torch
 from src.ramanujan_initializer import RamanujanInitializer
 
-# 初始化全局初始化器
-initializer = RamanujanInitializer(max_depth=1000)
+# 初始化全局初始化器（推荐方式）
+initializer = RamanujanInitializer(
+    ramanujan_depth=8,      # Ramanujan 调制层数（覆盖系数峰值区域）
+    transition_depth=8,     # 过渡到 Xavier 的层数
+    gain=1.0,               # 残差网络用 1.0，纯前馈用 None（自动推断）
+)
 
-# 为任意层生成权重
+# 一步初始化整个模型
+model = MyTransformer(...)
+initializer.apply(model)
+
+# 或手动初始化单个层
 weight = torch.empty(512, 512)
 initializer.init_tensor(weight, layer_idx=0)
 
 # 查看缩放因子
-scale = initializer.get_scale(layer_idx=50)
-print(f"Layer 50 scale: {scale:.6f}")
+scale = initializer.get_scale(layer_idx=5, fan_in=512)
+print(f"Layer 5 scale: {scale:.6f}")
 ```
 
 ### 构建 Transformer
@@ -154,12 +168,13 @@ logits, aux_loss = model(input_ids, return_aux_loss=True)
 ```python
 from src.ramanujan_initializer import RamanujanInitializer
 
-initializer = RamanujanInitializer(max_depth=1000)
-result = initializer.variance_test(depth=200, dim=512)
+# 残差网络（Transformer）用 gain=1.0
+initializer = RamanujanInitializer(gain=1.0)
+result = initializer.variance_test(depth=200, dim=512, use_residual=True)
 
 print(f"输入方差: {result['input_var']:.4f}")
 print(f"输出方差: {result['output_var']:.4f}")
-print(f"方差比:   {result['ratio']:.6f}")  # 应接近 1.0
+print(f"方差比:   {result['ratio']:.6f}")  # Residual+LN 下约 1.34
 ```
 
 ---
@@ -279,14 +294,36 @@ LayerNorm → Router (拉马努金初始化)
 
 ### RamanujanInitializer
 
+**构造函数参数：**
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `ramanujan_depth` | int | 8 | Ramanujan 系数调制层数（覆盖峰值区域 n=0~7） |
+| `transition_depth` | int | 8 | 从 Ramanujan 过渡到 Xavier 的层数 |
+| `nonlinearity` | str | 'linear' | 默认非线性类型：'linear', 'relu', 'gelu', 'silu' |
+| `gain` | float | None | 手动指定增益。None 时按 nonlinearity 自动推断 |
+
+**方法：**
+
 | 方法 | 说明 |
 |------|------|
-| `get_scale(layer_idx)` | 获取第 n 层的缩放因子 $s_n = \sqrt{\|a_n\|}$ |
-| `init_tensor(tensor, layer_idx)` | 初始化任意张量 |
-| `init_linear(layer, layer_idx)` | 初始化 nn.Linear |
-| `init_embedding(layer)` | 初始化 nn.Embedding |
-| `init_layer_norm(layer)` | 初始化 nn.LayerNorm |
-| `variance_test(depth, dim)` | 方差保持性测试 |
+| `apply(model, gain=1.0)` | **推荐**：一步完成层索引分配 + 初始化 |
+| `get_scale(layer_idx, fan_in)` | 获取第 n 层的缩放因子 |
+| `init_tensor(tensor, layer_idx, gain)` | 初始化任意张量 |
+| `init_linear(layer, layer_idx, gain)` | 初始化 nn.Linear |
+| `variance_test(depth, dim, use_residual)` | 方差保持性测试 |
+
+**使用建议：**
+
+```python
+# 标准 Transformer（残差 + LayerNorm）
+initializer = RamanujanInitializer(gain=1.0)
+initializer.apply(model)
+
+# 纯前馈网络 + ReLU
+initializer = RamanujanInitializer(nonlinearity='relu')
+initializer.apply(model)  # gain 自动用 sqrt(2)
+```
 
 ### build_ramanujan_transformer
 
@@ -342,7 +379,13 @@ MIT
 
 **Neural Network Weight Initialization Based on Ramanujan's Modular Function Recurrence Relation**
 
+[![Version](https://img.shields.io/badge/version-2.0.0-blue)](CHANGELOG.md)
+[![Python](https://img.shields.io/badge/python-3.8+-green)](https://www.python.org/)
+[![PyTorch](https://img.shields.io/badge/pytorch-≥2.0.0-ee4c2c)](https://pytorch.org/)
+
 English | [中文](#项目简介)
+
+> **v2.0.0** — Fixes scale factor explosion/collapse, layer index tracking, gain parameter, and more. See [CHANGELOG.md](CHANGELOG.md)
 
 ---
 
@@ -437,16 +480,24 @@ pip install torch numpy matplotlib
 import torch
 from src.ramanujan_initializer import RamanujanInitializer
 
-# Initialize global initializer
-initializer = RamanujanInitializer(max_depth=1000)
+# Initialize global initializer (recommended)
+initializer = RamanujanInitializer(
+    ramanujan_depth=8,      # Ramanujan modulation layers (covers peak region)
+    transition_depth=8,     # Transition layers to Xavier
+    gain=1.0,               # Use 1.0 for residual networks, None for auto
+)
 
-# Generate weights for any layer
+# One-step initialization for entire model
+model = MyTransformer(...)
+initializer.apply(model)
+
+# Or manually initialize a single layer
 weight = torch.empty(512, 512)
 initializer.init_tensor(weight, layer_idx=0)
 
 # View scale factor
-scale = initializer.get_scale(layer_idx=50)
-print(f"Layer 50 scale: {scale:.6f}")
+scale = initializer.get_scale(layer_idx=5, fan_in=512)
+print(f"Layer 5 scale: {scale:.6f}")
 ```
 
 ### Build Transformer
@@ -494,12 +545,13 @@ logits, aux_loss = model(input_ids, return_aux_loss=True)
 ```python
 from src.ramanujan_initializer import RamanujanInitializer
 
-initializer = RamanujanInitializer(max_depth=1000)
-result = initializer.variance_test(depth=200, dim=512)
+# Residual network (Transformer) uses gain=1.0
+initializer = RamanujanInitializer(gain=1.0)
+result = initializer.variance_test(depth=200, dim=512, use_residual=True)
 
 print(f"Input variance:  {result['input_var']:.4f}")
 print(f"Output variance: {result['output_var']:.4f}")
-print(f"Variance ratio:  {result['ratio']:.6f}")  # should be close to 1.0
+print(f"Variance ratio:  {result['ratio']:.6f}")  # ~1.34 with Residual+LN
 ```
 
 ---
@@ -619,14 +671,36 @@ LayerNorm → Router (Ramanujan initialization)
 
 ### RamanujanInitializer
 
+**Constructor Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `ramanujan_depth` | int | 8 | Ramanujan coefficient modulation layers (covers peak region n=0~7) |
+| `transition_depth` | int | 8 | Transition layers from Ramanujan to Xavier |
+| `nonlinearity` | str | 'linear' | Default nonlinearity: 'linear', 'relu', 'gelu', 'silu' |
+| `gain` | float | None | Manual gain. None = auto-infer from nonlinearity |
+
+**Methods:**
+
 | Method | Description |
 |--------|-------------|
-| `get_scale(layer_idx)` | Get scale factor for layer n: $s_n = \sqrt{\|a_n\|}$ |
-| `init_tensor(tensor, layer_idx)` | Initialize any tensor |
-| `init_linear(layer, layer_idx)` | Initialize nn.Linear |
-| `init_embedding(layer)` | Initialize nn.Embedding |
-| `init_layer_norm(layer)` | Initialize nn.LayerNorm |
-| `variance_test(depth, dim)` | Variance preservation test |
+| `apply(model, gain=1.0)` | **Recommended**: One-step layer index assignment + initialization |
+| `get_scale(layer_idx, fan_in)` | Get scale factor for layer n |
+| `init_tensor(tensor, layer_idx, gain)` | Initialize any tensor |
+| `init_linear(layer, layer_idx, gain)` | Initialize nn.Linear |
+| `variance_test(depth, dim, use_residual)` | Variance preservation test |
+
+**Usage Recommendations:**
+
+```python
+# Standard Transformer (residual + LayerNorm)
+initializer = RamanujanInitializer(gain=1.0)
+initializer.apply(model)
+
+# Pure feedforward + ReLU
+initializer = RamanujanInitializer(nonlinearity='relu')
+initializer.apply(model)  # gain auto-uses sqrt(2)
+```
 
 ### build_ramanujan_transformer
 

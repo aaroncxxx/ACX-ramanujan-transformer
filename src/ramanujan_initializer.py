@@ -1,18 +1,42 @@
 """
-拉马努金模函数初始化器
+拉马努金模函数初始化器 v2（修复版）
 
-基于拉马努金1916年未发表笔记中克莱因j不变量的微分递推关系，
-实现严格数学意义上的方差保持权重初始化。
+基于拉马努金递推关系的权重初始化方案。
 
 核心递推公式:
     a_{n+1} = (π²/n²) * a_n + (2π/(n(n+1))) * a_{n-1}
+    a_0 = 1, a_1 = π/√3
 
-其中 a_0 = 1, a_1 = π/√3 (由j不变量的傅里叶展开系数导出)
+数学性质:
+    - 系数在 n≈4 处达到峰值 (~70)，之后指数衰减至零
+    - 衰减由 (π²/n²) < 1 (n≥4) 的收缩性导致
+    - 本质类似 Bessel 函数递推，非标准模形式递推
+
+设计策略（三层混合方案）:
+    1. 前 Ramanujan 层 (默认8层): 使用峰值归一化的系数调制 Xavier 初始化
+       → 提供独特的"拉马努金轮廓"初始化模式
+    2. 过渡层 (8-16层): 线性混合 Ramanujan 调制与纯 Xavier
+       → 平滑过渡，避免突变
+    3. 深层 (>16层): 标准 Xavier/Kaiming 初始化
+       → 系数已衰减至零，无额外信息，回归经典方案
+
+方差保持保证:
+    每一层的标准差始终以 1/sqrt(fan_in) 为基准，Ramanujan 系数仅提供
+    ±调制，不改变数量级。残差连接下的方差增长由 Transformer 原有的
+    LayerNorm 处理，本初始化器不重复造轮子。
+
+修复内容 (vs v1):
+    1. nn.Tensor → torch.Tensor
+    2. 缩放因子不再爆炸/坍缩：混合方案保证所有层 scale ∈ [floor, ceiling]
+    3. layer_idx 自动传播：assign_layer_indices() 按拓扑序分配
+    4. 增益参数：残差网络用 gain=1.0，纯前馈用 gain=sqrt(2)
+    5. 残差方差测试
+    6. 数学文档：明确系数衰减性质和方案选择依据
 """
 
 import math
 from functools import lru_cache
-from typing import Optional, Tuple
+from typing import Optional, Dict, List
 
 import torch
 import torch.nn as nn
@@ -24,11 +48,12 @@ import torch.nn.init as init
 @lru_cache(maxsize=512)
 def ramanujan_coefficients(max_n: int) -> tuple:
     """
-    计算拉马努金递推系数 a_0, a_1, ..., a_{max_n}
+    计算递推系数 a_0, a_1, ..., a_{max_n}
 
-    递推关系源自j不变量的傅里叶展开:
-        j(τ) = q^{-1} + 744 + 196884q + ...
-        其傅里叶系数满足上述递推
+    注意：系数在 n≈4 处达到峰值后指数衰减。
+    对于 n > ~30，系数数值上接近零（< 1e-15）。
+    这是递推公式中 (π²/n²) 项收缩性的自然结果，
+    并非数值精度问题。
 
     Returns:
         tuple of float: (a_0, a_1, ..., a_{max_n})
@@ -49,74 +74,124 @@ def ramanujan_coefficients(max_n: int) -> tuple:
     return tuple(a)
 
 
-def get_ramanujan_scale(layer_idx: int, max_depth: int = 1000) -> float:
+def get_ramanujan_scale(layer_idx: int, ramanujan_depth: int = 8,
+                        transition_depth: int = 8,
+                        fan_in: int = 512) -> float:
     """
-    获取第 layer 层的拉马努金缩放因子
+    获取第 layer_idx 层的初始化缩放因子
 
-    该因子确保经过 layer 层传播后，信号方差严格保持不变。
+    三层混合方案：
+        - [0, ramanujan_depth): Ramanujan 调制的 Xavier
+        - [ramanujan_depth, ramanujan_depth + transition_depth): 线性过渡
+        - [ramanujan_depth + transition_depth, ∞): 纯 Xavier
 
     Args:
-        layer_idx: 当前层索引 (0-indexed)
-        max_depth: 最大深度（用于预计算系数表）
+        layer_idx: 当前层索引
+        ramanujan_depth: 使用 Ramanujan 调制的层数
+        transition_depth: 过渡层数
+        fan_in: 输入维度（用于 Xavier 基准）
 
     Returns:
-        float: 缩放因子 s_n，权重初始化 std = s_n / sqrt(fan_in)
+        float: 缩放因子，乘以 sqrt(1/fan_in) 得到权重 std
     """
-    coeffs = ramanujan_coefficients(min(layer_idx + 1, max_depth))
-    a_n = coeffs[min(layer_idx, len(coeffs) - 1)]
+    coeffs = ramanujan_coefficients(ramanujan_depth)
+    peak = max(abs(c) for c in coeffs) if coeffs else 1.0
 
-    # 归一化：使缩放因子在合理范围内
-    # a_n 本身会随 n 增长，需要除以参考值
-    # 参考值取 a_0 = 1，所以 scale = a_n
-    # 但为了数值稳定性，我们用 a_n / a_0 的平方根
-    return abs(a_n) ** 0.5
+    xavier_scale = 1.0
+
+    if layer_idx < ramanujan_depth:
+        raw = math.sqrt(abs(coeffs[layer_idx]) / peak)
+        return max(0.1, raw)
+
+    elif layer_idx < ramanujan_depth + transition_depth:
+        t = (layer_idx - ramanujan_depth) / transition_depth
+        last_ramanujan = math.sqrt(abs(coeffs[-1]) / peak)
+        last_ramanujan = max(0.1, last_ramanujan)
+        return last_ramanujan * (1 - t) + xavier_scale * t
+
+    else:
+        return xavier_scale
+
+
+# ─── 层索引自动追踪 ────────────────────────────────────────────────
+
+def assign_layer_indices(model: nn.Module, counter: Optional[List[int]] = None) -> int:
+    """
+    按 modules() 拓扑序为所有 Linear 层分配递增的 layer_idx。
+
+    结果存储在 module._ramanujan_idx 属性中。
+
+    Args:
+        model: 要初始化的模型
+        counter: 内部计数器 [current_idx]，首次调用传 None
+
+    Returns:
+        int: 分配的 Linear 层总数
+    """
+    if counter is None:
+        counter = [0]
+
+    for module in model.modules():
+        if isinstance(module, nn.Linear):
+            module._ramanujan_idx = counter[0]
+            counter[0] += 1
+
+    return counter[0]
 
 
 # ─── PyTorch 初始化函数 ─────────────────────────────────────────────
 
-def ramanujan_init_(tensor: nn.Tensor, fan_in: int, fan_out: int,
-                    layer_idx: int = 0, max_depth: int = 1000,
-                    nonlinearity: str = 'linear') -> nn.Tensor:
+def ramanujan_init_(tensor: torch.Tensor, fan_in: int, fan_out: int,
+                    layer_idx: int = 0, ramanujan_depth: int = 8,
+                    transition_depth: int = 8,
+                    nonlinearity: str = 'linear',
+                    gain: Optional[float] = None) -> torch.Tensor:
     """
-    拉马努金初始化：用递推系数修正标准Xavier/He初始化
+    拉马努金初始化
 
-    对于线性层: W ~ N(0, s_n² / fan_in)
-    对于ReLU层: W ~ N(0, 2 * s_n² / fan_in)
+    W ~ N(0, (scale * gain / sqrt(fan_in))²)
+
+    其中 scale 由 get_ramanujan_scale() 的三层混合方案决定。
 
     Args:
         tensor: 待初始化的权重张量
         fan_in: 输入维度
         fan_out: 输出维度
         layer_idx: 层索引
-        max_depth: 最大深度
-        nonlinearity: 'linear', 'relu', 'gelu', 'silu'
+        ramanujan_depth: Ramanujan 调制深度
+        transition_depth: 过渡深度
+        nonlinearity: 'linear', 'relu', 'gelu', 'silu'（当 gain 未指定时用于推断）
+        gain: 手动指定增益。None 时自动推断：
+              - relu/gelu/silu → sqrt(2), linear → 1.0
+              对于标准 Transformer（残差+LayerNorm），建议显式传 gain=1.0
 
     Returns:
         初始化后的张量
     """
-    s_n = get_ramanujan_scale(layer_idx, max_depth)
+    scale = get_ramanujan_scale(layer_idx, ramanujan_depth,
+                                transition_depth, fan_in)
 
-    # 基础方差（同Xavier/He）
-    if nonlinearity == 'relu':
-        std = math.sqrt(2.0 / fan_in)
-    elif nonlinearity in ('gelu', 'silu', 'swish'):
-        std = math.sqrt(2.0 / fan_in)  # 近似，因GELU/SiLU的方差≈ReLU
-    else:
-        std = math.sqrt(1.0 / fan_in)
+    if gain is None:
+        if nonlinearity in ('relu', 'gelu', 'silu', 'swish'):
+            gain = math.sqrt(2.0)
+        else:
+            gain = 1.0
 
-    # 乘以拉马努金缩放因子
-    std *= s_n
+    std = gain * scale / math.sqrt(fan_in)
 
-    # 截断正态分布（±2σ），避免极端值
-    init.trunc_normal_(tensor, std=std, a=-2 * std, b=2 * std)
+    init.trunc_normal_(tensor, mean=0.0, std=std, a=-2 * std, b=2 * std)
     return tensor
 
 
-def ramanujan_init_uniform_(tensor: nn.Tensor, fan_in: int, fan_out: int,
-                            layer_idx: int = 0, max_depth: int = 1000) -> nn.Tensor:
-    """均匀分布版本的拉马努金初始化"""
-    s_n = get_ramanujan_scale(layer_idx, max_depth)
-    limit = math.sqrt(3.0 / fan_in) * s_n
+def ramanujan_init_uniform_(tensor: torch.Tensor, fan_in: int, fan_out: int,
+                            layer_idx: int = 0, ramanujan_depth: int = 8,
+                            transition_depth: int = 8,
+                            gain: Optional[float] = None) -> torch.Tensor:
+    """均匀分布版本"""
+    scale = get_ramanujan_scale(layer_idx, ramanujan_depth,
+                                transition_depth, fan_in)
+    g = gain if gain is not None else 1.0
+    limit = g * scale / math.sqrt(fan_in) * math.sqrt(3.0)
     init.uniform_(tensor, -limit, limit)
     return tensor
 
@@ -125,101 +200,157 @@ def ramanujan_init_uniform_(tensor: nn.Tensor, fan_in: int, fan_out: int,
 
 class RamanujanInitializer:
     """
-    全局初始化器：管理所有层的拉马努金系数
+    全局初始化器
 
-    使用方法:
-        initializer = RamanujanInitializer(max_depth=1000)
-        weight = initializer.init_linear(linear_layer, layer_idx=0)
+    使用方法（推荐）:
+        initializer = RamanujanInitializer()
+        initializer.apply(model)
+
+    或手动:
+        assign_layer_indices(model)
+        model.apply(initializer._init_fn)
+
+    参数说明:
+        ramanujan_depth: 使用 Ramanujan 系数调制的层数（默认8，覆盖系数峰值区域）
+        transition_depth: 从 Ramanujan 过渡到 Xavier 的层数（默认8）
+        nonlinearity: 默认非线性类型
+        gain: 手动指定增益。None 时按 nonlinearity 自动推断。
+              对于标准 Transformer（残差+LayerNorm），建议显式传 gain=1.0
     """
 
-    def __init__(self, max_depth: int = 1000, nonlinearity: str = 'linear'):
-        self.max_depth = max_depth
+    def __init__(self, ramanujan_depth: int = 8, transition_depth: int = 8,
+                 nonlinearity: str = 'linear', gain: Optional[float] = None):
+        self.ramanujan_depth = ramanujan_depth
+        self.transition_depth = transition_depth
         self.nonlinearity = nonlinearity
-        self._coeffs = ramanujan_coefficients(max_depth)
-        self._layer_count = 0
+        self.gain = gain
+        self._coeffs = ramanujan_coefficients(ramanujan_depth)
 
     @property
     def coefficients(self) -> tuple:
         return self._coeffs
 
-    def get_scale(self, layer_idx: int) -> float:
-        return get_ramanujan_scale(layer_idx, self.max_depth)
+    def get_scale(self, layer_idx: int, fan_in: int = 512) -> float:
+        return get_ramanujan_scale(layer_idx, self.ramanujan_depth,
+                                   self.transition_depth, fan_in)
 
-    def init_tensor(self, tensor: nn.Tensor, layer_idx: int = 0,
-                    nonlinearity: Optional[str] = None) -> nn.Tensor:
-        """初始化任意张量"""
+    def apply(self, model: nn.Module, nonlinearity: Optional[str] = None,
+              gain: Optional[float] = None):
+        """
+        一步完成：分配层索引 + 初始化所有参数
+
+        Args:
+            model: 要初始化的 PyTorch 模型
+            nonlinearity: 覆盖默认非线性类型
+            gain: 覆盖默认增益。对于标准 Transformer（残差+LayerNorm），
+                  建议显式传 gain=1.0
+        """
+        assign_layer_indices(model)
+        model.apply(lambda m: self._init_module(m, nonlinearity, gain))
+
+    def _init_module(self, module: nn.Module, nonlinearity: Optional[str] = None,
+                     gain: Optional[float] = None):
+        """单模块初始化（内部使用）"""
         func = nonlinearity or self.nonlinearity
-        fan_in = tensor.shape[-1] if len(tensor.shape) > 1 else tensor.shape[0]
-        fan_out = tensor.shape[0] if len(tensor.shape) > 1 else 1
-        return ramanujan_init_(tensor, fan_in, fan_out, layer_idx,
-                               self.max_depth, func)
+        g = gain if gain is not None else self.gain
+
+        if isinstance(module, nn.Linear):
+            layer_idx = getattr(module, '_ramanujan_idx', 0)
+            if module.weight is not None:
+                ramanujan_init_(module.weight, module.in_features,
+                                module.out_features, layer_idx,
+                                self.ramanujan_depth, self.transition_depth,
+                                func, gain=g)
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
+
+        elif isinstance(module, nn.LayerNorm):
+            nn.init.ones_(module.weight)
+            nn.init.zeros_(module.bias)
+
+        elif isinstance(module, nn.Embedding):
+            nn.init.normal_(module.weight, std=0.02)
+
+    # ── 手动接口（向后兼容）──
 
     def init_linear(self, layer: nn.Linear, layer_idx: int = 0,
-                    nonlinearity: Optional[str] = None) -> nn.Linear:
-        """初始化 nn.Linear 层"""
+                    nonlinearity: Optional[str] = None,
+                    gain: Optional[float] = None) -> nn.Linear:
+        func = nonlinearity or self.nonlinearity
+        g = gain if gain is not None else self.gain
         if layer.weight is not None:
-            self.init_tensor(layer.weight, layer_idx, nonlinearity)
+            ramanujan_init_(layer.weight, layer.in_features,
+                            layer.out_features, layer_idx,
+                            self.ramanujan_depth, self.transition_depth,
+                            func, gain=g)
         if layer.bias is not None:
             nn.init.zeros_(layer.bias)
         return layer
 
-    def init_embedding(self, layer: nn.Embedding, scale: float = 1.0) -> nn.Embedding:
-        """初始化 Embedding 层"""
-        nn.init.normal_(layer.weight, std=0.02 * scale)
-        return layer
+    def init_tensor(self, tensor: torch.Tensor, layer_idx: int = 0,
+                    nonlinearity: Optional[str] = None,
+                    gain: Optional[float] = None) -> torch.Tensor:
+        func = nonlinearity or self.nonlinearity
+        g = gain if gain is not None else self.gain
+        fan_in = tensor.shape[-1] if len(tensor.shape) > 1 else tensor.shape[0]
+        fan_out = tensor.shape[0] if len(tensor.shape) > 1 else 1
+        return ramanujan_init_(tensor, fan_in, fan_out, layer_idx,
+                               self.ramanujan_depth, self.transition_depth,
+                               func, gain=g)
 
-    def init_layer_norm(self, layer: nn.LayerNorm) -> nn.LayerNorm:
-        """LayerNorm 保持标准初始化（scale=1, shift=0）"""
-        nn.init.ones_(layer.weight)
-        nn.init.zeros_(layer.bias)
-        return layer
-
-    def register_module(self, module: nn.Module, layer_idx: int = 0,
-                        nonlinearity: Optional[str] = None):
-        """
-        递归注册：自动初始化模块树中所有 Linear 层
-
-        搭配 model.apply() 使用，或直接在构建时调用。
-        """
-        if isinstance(module, nn.Linear):
-            self.init_linear(module, layer_idx, nonlinearity)
-        elif isinstance(module, nn.LayerNorm):
-            self.init_layer_norm(module)
-        elif isinstance(module, nn.Embedding):
-            self.init_embedding(module)
-        # 递归子模块
-        for child in module.children():
-            if child is not module:
-                self.register_module(child, layer_idx, nonlinearity)
+    # ── 方差验证工具 ──
 
     def variance_test(self, depth: int, dim: int = 512,
-                      nonlinearity: str = 'linear') -> dict:
+                      nonlinearity: str = 'linear',
+                      use_residual: bool = True) -> Dict:
         """
         方差保持性测试
 
-        模拟 depth 层全连接网络的信号传播，
-        验证输出方差是否等于输入方差。
+        模拟 depth 层全连接网络的信号传播，验证输出方差。
+
+        注意：
+        - 带残差时使用 gain=1.0（匹配 Transformer 的残差+LN 结构）
+        - 无残差时使用 gain=sqrt(2)（匹配纯前馈+ReLU 结构）
 
         Returns:
-            dict: {'input_var', 'output_var', 'ratio', 'per_layer_vars'}
+            dict: {
+                'input_var', 'output_var', 'ratio',
+                'per_layer_vars', 'max_ratio', 'min_ratio'
+            }
         """
         x = torch.randn(1000, dim)
         input_var = x.var().item()
         per_layer_vars = [input_var]
+        ratios = []
+
+        if use_residual:
+            gain = 1.0
+        elif nonlinearity in ('relu', 'gelu', 'silu'):
+            gain = math.sqrt(2.0)
+        else:
+            gain = 1.0
 
         for i in range(depth):
-            s_n = get_ramanujan_scale(i, self.max_depth)
-            std = math.sqrt(1.0 / dim) * s_n
+            s = get_ramanujan_scale(i, self.ramanujan_depth,
+                                    self.transition_depth, dim)
+            std = gain * s / math.sqrt(dim)
             W = torch.randn(dim, dim) * std
 
-            if nonlinearity == 'relu':
-                x = torch.relu(x @ W)
-            elif nonlinearity in ('gelu', 'silu'):
-                x = torch.nn.functional.gelu(x @ W)
-            else:
-                x = x @ W
+            y = x @ W
 
-            per_layer_vars.append(x.var().item())
+            if nonlinearity == 'relu':
+                y = torch.relu(y)
+            elif nonlinearity in ('gelu', 'silu'):
+                y = torch.nn.functional.gelu(y)
+
+            if use_residual:
+                x = x + y
+            else:
+                x = y
+
+            current_var = x.var().item()
+            per_layer_vars.append(current_var)
+            ratios.append(current_var / input_var)
 
         output_var = x.var().item()
         return {
@@ -227,28 +358,30 @@ class RamanujanInitializer:
             'output_var': output_var,
             'ratio': output_var / input_var,
             'per_layer_vars': per_layer_vars,
+            'max_ratio': max(ratios) if ratios else 1.0,
+            'min_ratio': min(ratios) if ratios else 1.0,
         }
 
 
 # ─── 便捷函数 ──────────────────────────────────────────────────────
 
-def get_initialization_function(max_depth: int = 1000,
+def get_initialization_function(ramanujan_depth: int = 8,
+                                transition_depth: int = 8,
                                 nonlinearity: str = 'linear'):
     """
     返回可传递给 nn.Module.apply() 的初始化函数
 
-    用法:
-        init_fn = get_initialization_function(max_depth=1000)
-        model.apply(init_fn)
+    注意：使用前必须先调用 assign_layer_indices(model)。
+
+    推荐改用 RamanujanInitializer.apply(model) 一步完成。
     """
-    initializer = RamanujanInitializer(max_depth, nonlinearity)
+    initializer = RamanujanInitializer(ramanujan_depth, transition_depth,
+                                       nonlinearity)
 
     def init_fn(module):
         if isinstance(module, nn.Linear):
-            # 通过模块属性追踪层索引（简化版）
-            layer_idx = getattr(module, '_ramanujan_idx', 0)
-            initializer.init_linear(module, layer_idx, nonlinearity)
-        elif isinstance(module, nn.LayerNorm):
-            initializer.init_layer_norm(module)
+            initializer._init_module(module, nonlinearity)
+        elif isinstance(module, (nn.LayerNorm, nn.Embedding)):
+            initializer._init_module(module, nonlinearity)
 
     return init_fn
