@@ -13,17 +13,17 @@ import torch.nn.functional as F
 from typing import Optional, Tuple, Dict
 
 from .feedforward import RamanujanFFN
-from .ramanujan_initializer import RamanujanInitializer
+from .ramanujan_initializer import RamanujanInitializer, LayerRole, tag_linear_role
 
 
 class RamanujanRouter(nn.Module):
     """
-    MoE 路由器
+    MoE 路由器 (v1.4)
 
     将输入 token 映射到专家概率分布：
         gate(x) = softmax(x · W_gate)
 
-    W_gate 使用拉马努金初始化。
+    v1.4: 使用轻量版拉马努金初始化（gain=0.1），避免路由权重梯度消失
     """
 
     def __init__(self, d_model: int, num_experts: int,
@@ -37,10 +37,13 @@ class RamanujanRouter(nn.Module):
         # 门控线性层：d_model → num_experts
         self.gate = nn.Linear(d_model, num_experts, bias=False)
 
-        # 拉马努金初始化
+        # 标记为 Router 角色
+        tag_linear_role(self.gate, LayerRole.ROUTER)
+
+        # 拉马努金初始化（Router 专属轻量 gain=0.1）
         if initializer is None:
             initializer = RamanujanInitializer(max_depth=1000)
-        initializer.init_linear(self.gate, layer_idx, nonlinearity='linear')
+        initializer.init_linear(self.gate, layer_idx, nonlinearity='linear', gain=0.1)
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -215,26 +218,30 @@ class RamanujanMoELayer(nn.Module):
         router_logits: torch.Tensor,
     ) -> Dict[str, torch.Tensor]:
         """
-        计算辅助损失
+        计算辅助损失 (v1.4 修复)
 
         1. 负载均衡损失：防止所有 token 路由到同一个专家
+           v1.4 修复：使用 Top-K 选择的全部专家计算 f_i，而非仅 Top-1
         2. Router z-loss：防止 router logits 过大
         """
         B, T, E = router_probs.shape
         num_tokens = B * T
 
-        # 负载均衡损失 (Switch Transformer 风格)
-        # f_i = fraction of tokens routed to expert i
+        probs_flat = router_probs.reshape(num_tokens, E)
+
+        # ── 负载均衡损失 (Switch Transformer 风格，Top-K 修正) ──
+        # f_i = fraction of tokens where expert i appears in top-K selection
         # P_i = average routing probability for expert i
         # loss = E * sum(f_i * P_i)
 
-        probs_flat = router_probs.reshape(num_tokens, E)
+        # Top-K 选择的全部专家（修复：不再只看 Top-1）
+        _, top_k_indices = torch.topk(probs_flat, self.top_k, dim=-1)  # (num_tokens, K)
 
-        # f_i: 每个专家实际接收的 token 比例
-        # 用 top-1 近似
-        top1_indices = probs_flat.argmax(dim=-1)  # (num_tokens,)
-        one_hot = F.one_hot(top1_indices, E).float()  # (num_tokens, E)
-        f = one_hot.mean(dim=0)  # (E,)
+        # f_i: 每个专家在 top-K 选择中出现的比例
+        one_hot = F.one_hot(top_k_indices, E).float()  # (num_tokens, K, E)
+        # 合并 K 维度：只要专家出现在任一 top-K 位置就算 1 次
+        expert_selected = one_hot.sum(dim=1).clamp(max=1.0)  # (num_tokens, E)
+        f = expert_selected.mean(dim=0)  # (E,)
 
         # P_i: 平均路由概率
         P = probs_flat.mean(dim=0)  # (E,)
@@ -372,7 +379,7 @@ class RamanujanMoETransformer(nn.Module):
         self.num_layers = num_layers
         self.decoder_only = decoder_only
 
-        initializer = RamanujanInitializer(max_depth=max_depth)
+        initializer = RamanujanInitializer(max_depth=max_depth, num_layers=num_layers)
 
         # 嵌入
         from .embeddings import RamanujanEmbeddings

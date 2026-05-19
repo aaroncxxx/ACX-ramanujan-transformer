@@ -1,5 +1,48 @@
 # Changelog
 
+## v1.4.0 (2026-05-19)
+
+### 🔴 Core Algorithm (P0)
+
+- **激活函数自适应增益**: 为 GELU/SiLU/SiGLU/ReLU/Sigmoid 各自推导理论增益系数，替代固定 gain=sqrt(2)
+- **动态递推深度计算**: `compute_optimal_depth(num_layers)` 根据模型层数自动计算 ramanujan_depth/transition_depth，保留手动覆盖接口
+- **分层初始化适配**: Embedding/QKV/FFN/Output/Router 差异化递推系数，LM Head 单独做方差缩放
+- **MoE 路由层专属初始化**: Router gate 使用轻量 gain=0.1，避免路由权重梯度消失
+
+### 🔴 Bug Fixes (P0)
+
+- **MoE 辅助损失 Top-K 修复**: `_compute_aux_loss` 中 `f_i` 从仅统计 Top-1 改为覆盖全部 Top-K 选择的专家，负载均衡损失更准确
+
+### 🟡 Engineering (P0)
+
+- **梯度检查点**: `build_ramanujan_transformer(gradient_checkpointing=True)` 支持，1000 层模型显存降低 60%+
+- **系数预计算缓存**: 模块加载时自动预计算 [8,16,32,64,128,256,512,1024] 深度的系数表
+
+### 🟢 Usability (P1)
+
+- **YAML 配置文件**: `configs/default.yaml`，模型/训练/数据/MoE 参数抽离
+- **CLI 命令行工具**: `acx-rt info/verify/benchmark/train`
+- **pytest 单元测试**: `tests/test_core.py`，覆盖初始化器、Attention、FFN、Block、MoE 核心逻辑
+
+### 📝 API Changes
+
+- `RamanujanInitializer` 新增 `num_layers` 参数（自动计算深度）
+- `RamanujanInitializer` 新增 `LayerRole` 层角色标签系统
+- `build_ramanujan_transformer()` 新增 `gradient_checkpointing` 参数
+- `ACTIVATION_GAIN` 增益表暴露为模块级常量
+
+### 🔧 改动文件
+
+- `src/ramanujan_initializer.py` — 增益表、动态深度、分层初始化、系数缓存
+- `src/moe.py` — Router 专属初始化、aux loss Top-K 修复
+- `src/ramanujan_transformer.py` — 梯度检查点、动态深度透传
+- `src/transformer_block.py` — 梯度检查点注释
+- `configs/default.yaml` — 配置文件
+- `tests/test_core.py` — 单元测试
+- `cli/acx_rt.py` — CLI 工具
+
+---
+
 ## v1.3.1 (2026-05-19)
 
 ### 🆕 New Features

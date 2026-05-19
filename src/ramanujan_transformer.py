@@ -2,15 +2,17 @@
 完整 Transformer 模型
 
 支持编码器-only（BERT风格）和编码器-解码器（GPT风格）架构。
+v1.4: 支持梯度检查点、动态递推深度
 """
 
 import torch
 import torch.nn as nn
 from typing import Optional
+from functools import partial
 
 from .embeddings import RamanujanEmbeddings
 from .transformer_block import RamanujanTransformerBlock
-from .ramanujan_initializer import RamanujanInitializer
+from .ramanujan_initializer import RamanujanInitializer, compute_optimal_depth
 
 
 class RamanujanTransformerEncoder(nn.Module):
@@ -20,6 +22,7 @@ class RamanujanTransformerEncoder(nn.Module):
     - Token Embedding + Positional Encoding
     - N × Transformer Block (self-attention, no causal mask)
     - Final LayerNorm
+    - v1.4: 梯度检查点支持
     """
 
     def __init__(self, vocab_size: int, d_model: int = 768,
@@ -28,13 +31,15 @@ class RamanujanTransformerEncoder(nn.Module):
                  activation: str = 'gelu',
                  max_len: int = 512,
                  max_depth: int = 1000,
-                 alpha: float = 0.3, lambda_decay: float = 0.5):
+                 alpha: float = 0.3, lambda_decay: float = 0.5,
+                 gradient_checkpointing: bool = False):
         super().__init__()
 
         self.d_model = d_model
         self.num_layers = num_layers
+        self.gradient_checkpointing = gradient_checkpointing
 
-        initializer = RamanujanInitializer(max_depth=max_depth)
+        initializer = RamanujanInitializer(max_depth=max_depth, num_layers=num_layers)
 
         # 嵌入
         self.embeddings = RamanujanEmbeddings(
@@ -68,7 +73,12 @@ class RamanujanTransformerEncoder(nn.Module):
         x = self.embeddings(input_ids)
 
         for layer in self.layers:
-            x = layer(x, is_causal=False)
+            if self.gradient_checkpointing and self.training:
+                x = torch.utils.checkpoint.checkpoint(
+                    layer, x, use_reentrant=False
+                )
+            else:
+                x = layer(x, is_causal=False)
 
         return self.final_norm(x)
 
@@ -80,6 +90,7 @@ class RamanujanTransformerDecoder(nn.Module):
     - Token Embedding + Positional Encoding
     - N × Transformer Block (causal self-attention)
     - LM Head
+    - v1.4: 梯度检查点支持
     """
 
     def __init__(self, vocab_size: int, d_model: int = 768,
@@ -88,13 +99,15 @@ class RamanujanTransformerDecoder(nn.Module):
                  activation: str = 'gelu',
                  max_len: int = 2048,
                  max_depth: int = 1000,
-                 alpha: float = 0.3, lambda_decay: float = 0.5):
+                 alpha: float = 0.3, lambda_decay: float = 0.5,
+                 gradient_checkpointing: bool = False):
         super().__init__()
 
         self.d_model = d_model
         self.num_layers = num_layers
+        self.gradient_checkpointing = gradient_checkpointing
 
-        initializer = RamanujanInitializer(max_depth=max_depth)
+        initializer = RamanujanInitializer(max_depth=max_depth, num_layers=num_layers)
 
         # 嵌入
         self.embeddings = RamanujanEmbeddings(
@@ -130,7 +143,12 @@ class RamanujanTransformerDecoder(nn.Module):
         x = self.embeddings(input_ids)
 
         for layer in self.layers:
-            x = layer(x, is_causal=True)
+            if self.gradient_checkpointing and self.training:
+                x = torch.utils.checkpoint.checkpoint(
+                    layer, x, True, use_reentrant=False
+                )
+            else:
+                x = layer(x, is_causal=True)
 
         x = self.final_norm(x)
         return self.lm_head(x)
@@ -184,6 +202,7 @@ def build_ramanujan_transformer(
     decoder_only: bool = True,
     alpha: float = 0.3,
     lambda_decay: float = 0.5,
+    gradient_checkpointing: bool = False,
 ) -> nn.Module:
     """
     快速构建拉马努金 Transformer
@@ -201,6 +220,7 @@ def build_ramanujan_transformer(
         decoder_only: True=GPT风格, False=BERT风格
         alpha: 自适应缩放修正幅度 (默认 0.3)
         lambda_decay: 自适应缩放衰减速率 (默认 0.5)
+        gradient_checkpointing: 启用梯度检查点以节省显存 (默认 False)
 
     Returns:
         nn.Module: 完整的 Transformer 模型
@@ -209,11 +229,13 @@ def build_ramanujan_transformer(
         return RamanujanTransformerDecoder(
             vocab_size, d_model, nhead, num_layers,
             dim_feedforward, dropout, activation,
-            max_len, max_depth, alpha, lambda_decay
+            max_len, max_depth, alpha, lambda_decay,
+            gradient_checkpointing
         )
     else:
         return RamanujanTransformerEncoder(
             vocab_size, d_model, nhead, num_layers,
             dim_feedforward, dropout, activation,
-            max_len, max_depth, alpha, lambda_decay
+            max_len, max_depth, alpha, lambda_decay,
+            gradient_checkpointing
         )

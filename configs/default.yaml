@@ -1,0 +1,46 @@
+# ACX-Ramanujan-Transformer 默认配置
+# 用法: python -c "import yaml; cfg = yaml.safe_load(open('configs/default.yaml'))"
+
+model:
+  vocab_size: 50257
+  d_model: 768
+  nhead: 12
+  num_layers: 12
+  dim_feedforward: 3072
+  dropout: 0.1
+  activation: gelu
+  max_len: 2048
+  decoder_only: true
+
+# 拉马努金初始化参数
+ramanujan:
+  max_depth: 1000        # 系数表最大深度
+  ramanujan_depth: null   # null = 自动计算
+  transition_depth: null  # null = 自动计算
+  alpha: 0.3             # 自适应 attention 缩放修正幅度
+  lambda_decay: 0.5      # 自适应 attention 缩放衰减速率
+  gradient_checkpointing: false
+
+# 训练参数
+training:
+  epochs: 30
+  batch_size: 32
+  lr: 3.0e-4
+  weight_decay: 0.01
+  warmup_ratio: 0.1
+  grad_clip: 1.0
+  seed: 42
+
+# 数据
+data:
+  vocab_size: 1000       # 合成数据词表大小
+  num_train_samples: 800
+  num_val_samples: 200
+  seq_len: 128
+
+# MoE 参数（仅 moe 配置使用）
+moe:
+  num_experts: 8
+  top_k: 2
+  capacity_factor: 1.25
+  aux_loss_weight: 0.01

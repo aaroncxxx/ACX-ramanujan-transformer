@@ -2,6 +2,7 @@
 Transformer Block
 
 集成拉马努金初始化的完整 Transformer 编码器/解码器块。
+v1.4: 支持梯度检查点（gradient checkpointing）
 """
 
 import torch
