@@ -1,0 +1,73 @@
+# ACX-Ramanujan-Transformer 配置 (v1.6)
+
+model:
+  vocab_size: 50257
+  d_model: 768
+  nhead: 12
+  num_layers: 12
+  dim_feedforward: 3072
+  dropout: 0.1
+  activation: gelu
+  max_len: 2048
+  decoder_only: true
+
+# 拉马努金初始化参数
+ramanujan:
+  max_depth: 1000
+  ramanujan_depth: null
+  transition_depth: null
+  alpha: 0.3
+  lambda_decay: 0.5
+  gradient_checkpointing: false
+  quantization: none
+  long_context_seq_len: 2048
+
+# v1.6: FlashAttention
+attention:
+  use_flash_attention: true
+  sliding_window_size: null   # null = 全局注意力，整数 = 滑动窗口大小
+
+# v1.6: 混合精度训练
+mixed_precision: none   # fp16 / bf16 / none
+
+# v1.6: 分布式训练
+distributed:
+  nproc_per_node: 1     # GPU 数量
+
+# 训练参数
+training:
+  epochs: 30
+  batch_size: 32
+  lr: 3.0e-4
+  weight_decay: 0.01
+  adaptive_weight_decay: true
+  warmup_ratio: 0.1
+  grad_clip: 1.0
+  seed: 42
+
+# v1.6: 断点续训
+checkpoint:
+  dir: checkpoints
+  max_keep: 3
+  resume: null   # 恢复训练的检查点路径
+
+# 数据
+data:
+  vocab_size: 1000
+  num_train_samples: 800
+  num_val_samples: 200
+  seq_len: 128
+
+# MoE 参数
+moe:
+  num_experts: 8
+  top_k: 2
+  capacity_factor: 1.25
+  aux_loss_weight: 0.01
+  expert_dropout: 0.0       # v1.6: 专家 dropout
+  load_balancing_weight: 0.01  # v1.6: 负载均衡权重
+
+# 日志 (v1.6: WandB/TensorBoard)
+logging:
+  level: INFO
+  logger: none   # wandb / tensorboard / none

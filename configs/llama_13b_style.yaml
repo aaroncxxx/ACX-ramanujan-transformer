@@ -1,0 +1,29 @@
+# 预训练模型配置：13B Llama 风格
+
+model:
+  vocab_size: 32000
+  d_model: 5120
+  nhead: 40
+  num_layers: 40
+  dim_feedforward: 13824
+  dropout: 0.0
+  activation: silu
+  max_len: 4096
+  decoder_only: true
+
+ramanujan:
+  max_depth: 1000
+  alpha: 0.3
+  lambda_decay: 0.5
+  gradient_checkpointing: true
+  quantization: none
+  long_context_seq_len: 4096
+
+training:
+  epochs: 100
+  batch_size: 2
+  lr: 3.0e-4
+  weight_decay: 0.1
+  adaptive_weight_decay: true
+  warmup_ratio: 0.05
+  grad_clip: 1.0

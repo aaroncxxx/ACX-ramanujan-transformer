@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+eggs/
+*.egg
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Experiment outputs
+figures/*.png
+experiments/model.pt
+experiments/*.png
+
+# Logs
+*.log
+wandb/
+runs/
+
+# Torch checkpoints
+*.pt
+*.pth
+*.bin
+
+# Data
+data/
+*.csv
+*.jsonl

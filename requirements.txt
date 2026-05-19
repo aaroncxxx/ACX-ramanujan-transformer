@@ -1,0 +1,11 @@
+torch>=2.0.0
+numpy>=1.24.0
+matplotlib>=3.7.0
+
+# v1.6 可选依赖
+# flash-attn>=2.0.0     # FlashAttention-3 (需要 CUDA 11.8+ / ROCm 5.7+)
+# wandb>=0.15.0          # Weights & Biases 日志
+# tensorboard>=2.14.0    # TensorBoard 日志
+# onnx>=1.14.0           # ONNX 导出
+# onnxruntime>=1.16.0    # ONNX 推理验证
+# transformers>=4.35.0   # HuggingFace 兼容层
