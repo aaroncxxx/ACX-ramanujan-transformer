@@ -27,7 +27,8 @@ class RamanujanTransformerEncoder(nn.Module):
                  dim_feedforward: int = 3072, dropout: float = 0.1,
                  activation: str = 'gelu',
                  max_len: int = 512,
-                 max_depth: int = 1000):
+                 max_depth: int = 1000,
+                 alpha: float = 0.3, lambda_decay: float = 0.5):
         super().__init__()
 
         self.d_model = d_model
@@ -44,7 +45,8 @@ class RamanujanTransformerEncoder(nn.Module):
         self.layers = nn.ModuleList([
             RamanujanTransformerBlock(
                 d_model, nhead, dim_feedforward, dropout, activation,
-                layer_idx=i, initializer=initializer
+                layer_idx=i, initializer=initializer,
+                alpha=alpha, lambda_decay=lambda_decay
             )
             for i in range(num_layers)
         ])
@@ -85,7 +87,8 @@ class RamanujanTransformerDecoder(nn.Module):
                  dim_feedforward: int = 3072, dropout: float = 0.1,
                  activation: str = 'gelu',
                  max_len: int = 2048,
-                 max_depth: int = 1000):
+                 max_depth: int = 1000,
+                 alpha: float = 0.3, lambda_decay: float = 0.5):
         super().__init__()
 
         self.d_model = d_model
@@ -102,7 +105,8 @@ class RamanujanTransformerDecoder(nn.Module):
         self.layers = nn.ModuleList([
             RamanujanTransformerBlock(
                 d_model, nhead, dim_feedforward, dropout, activation,
-                layer_idx=i, initializer=initializer
+                layer_idx=i, initializer=initializer,
+                alpha=alpha, lambda_decay=lambda_decay
             )
             for i in range(num_layers)
         ])
@@ -178,6 +182,8 @@ def build_ramanujan_transformer(
     max_len: int = 512,
     max_depth: int = 1000,
     decoder_only: bool = True,
+    alpha: float = 0.3,
+    lambda_decay: float = 0.5,
 ) -> nn.Module:
     """
     快速构建拉马努金 Transformer
@@ -193,6 +199,8 @@ def build_ramanujan_transformer(
         max_len: 最大序列长度
         max_depth: 拉马努金系数最大深度
         decoder_only: True=GPT风格, False=BERT风格
+        alpha: 自适应缩放修正幅度 (默认 0.3)
+        lambda_decay: 自适应缩放衰减速率 (默认 0.5)
 
     Returns:
         nn.Module: 完整的 Transformer 模型
@@ -201,11 +209,11 @@ def build_ramanujan_transformer(
         return RamanujanTransformerDecoder(
             vocab_size, d_model, nhead, num_layers,
             dim_feedforward, dropout, activation,
-            max_len, max_depth
+            max_len, max_depth, alpha, lambda_decay
         )
     else:
         return RamanujanTransformerEncoder(
             vocab_size, d_model, nhead, num_layers,
             dim_feedforward, dropout, activation,
-            max_len, max_depth
+            max_len, max_depth, alpha, lambda_decay
         )

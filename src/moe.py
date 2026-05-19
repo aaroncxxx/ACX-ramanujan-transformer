@@ -278,16 +278,19 @@ class RamanujanMoETransformerBlock(nn.Module):
         capacity_factor: float = 1.25,
         layer_idx: int = 0,
         initializer: Optional[RamanujanInitializer] = None,
+        alpha: float = 0.3,
+        lambda_decay: float = 0.5,
     ):
         super().__init__()
 
         if initializer is None:
             initializer = RamanujanInitializer(max_depth=1000)
 
-        # 自注意力（复用现有实现）
+        # 自注意力（复用现有实现，自适应缩放）
         from .attention import RamanujanMultiHeadAttention
         self.self_attn = RamanujanMultiHeadAttention(
-            d_model, nhead, dropout, layer_idx, initializer
+            d_model, nhead, dropout, layer_idx, initializer,
+            alpha=alpha, lambda_decay=lambda_decay
         )
         self.norm1 = nn.LayerNorm(d_model)
 
@@ -360,6 +363,8 @@ class RamanujanMoETransformer(nn.Module):
         max_depth: int = 1000,
         decoder_only: bool = True,
         capacity_factor: float = 1.25,
+        alpha: float = 0.3,
+        lambda_decay: float = 0.5,
     ):
         super().__init__()
 
@@ -380,7 +385,8 @@ class RamanujanMoETransformer(nn.Module):
             RamanujanMoETransformerBlock(
                 d_model, nhead, dim_feedforward,
                 num_experts, top_k, dropout, activation,
-                capacity_factor, layer_idx=i, initializer=initializer
+                capacity_factor, layer_idx=i, initializer=initializer,
+                alpha=alpha, lambda_decay=lambda_decay
             )
             for i in range(num_layers)
         ])
@@ -479,6 +485,8 @@ def build_ramanujan_moe_transformer(
     max_depth: int = 1000,
     decoder_only: bool = True,
     capacity_factor: float = 1.25,
+    alpha: float = 0.3,
+    lambda_decay: float = 0.5,
 ) -> nn.Module:
     """
     快速构建拉马努金 MoE Transformer
@@ -497,6 +505,8 @@ def build_ramanujan_moe_transformer(
         max_depth: 拉马努金系数最大深度
         decoder_only: True=GPT, False=BERT
         capacity_factor: 容量因子
+        alpha: 自适应缩放修正幅度 (默认 0.3)
+        lambda_decay: 自适应缩放衰减速率 (默认 0.5)
 
     Returns:
         nn.Module: MoE Transformer 模型
@@ -505,5 +515,5 @@ def build_ramanujan_moe_transformer(
         vocab_size, d_model, nhead, num_layers,
         dim_feedforward, num_experts, top_k,
         dropout, activation, max_len, max_depth,
-        decoder_only, capacity_factor,
+        decoder_only, capacity_factor, alpha, lambda_decay,
     )

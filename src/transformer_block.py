@@ -27,15 +27,17 @@ class RamanujanTransformerBlock(nn.Module):
     def __init__(self, d_model: int, nhead: int, dim_feedforward: int,
                  dropout: float = 0.0, activation: str = 'gelu',
                  layer_idx: int = 0,
-                 initializer: Optional[RamanujanInitializer] = None):
+                 initializer: Optional[RamanujanInitializer] = None,
+                 alpha: float = 0.3, lambda_decay: float = 0.5):
         super().__init__()
 
         if initializer is None:
             initializer = RamanujanInitializer(max_depth=1000)
 
-        # 自注意力
+        # 自注意力（自适应缩放）
         self.self_attn = RamanujanMultiHeadAttention(
-            d_model, nhead, dropout, layer_idx, initializer
+            d_model, nhead, dropout, layer_idx, initializer,
+            alpha=alpha, lambda_decay=lambda_decay
         )
         self.norm1 = nn.LayerNorm(d_model)
 

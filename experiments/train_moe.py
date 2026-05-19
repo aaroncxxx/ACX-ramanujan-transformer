@@ -24,13 +24,38 @@ from src.ramanujan_transformer import build_ramanujan_transformer
 from src.moe import build_ramanujan_moe_transformer
 
 
-def get_cosine_schedule_with_warmup(optimizer, warmup_steps: int, total_steps: int):
-    """线性 warmup + 余弦衰减"""
+def get_piecewise_exp_schedule_with_warmup(optimizer, warmup_steps: int,
+                                            total_steps: int,
+                                            alpha: float = 3.0,
+                                            beta: float = 2.0,
+                                            phase1_ratio: float = 0.3):
+    """
+    三段式分段指数调度：线性 warmup → 快速指数衰减 → 缓慢指数衰减
+
+    Args:
+        optimizer: 优化器
+        warmup_steps: warmup 步数
+        total_steps: 总训练步数
+        alpha: phase1 衰减强度（结束时 lr ≈ lr_max * e^(-alpha)）
+        beta: phase2 衰减强度
+        phase1_ratio: phase1 占总步数的比例
+    """
+    phase1_steps = int((total_steps - warmup_steps) * phase1_ratio)
+    phase2_steps = total_steps - warmup_steps - phase1_steps
+
     def lr_lambda(current_step: int) -> float:
         if current_step < warmup_steps:
             return float(current_step) / float(max(1, warmup_steps))
-        progress = float(current_step - warmup_steps) / float(max(1, total_steps - warmup_steps))
-        return max(0.0, 0.5 * (1.0 + math.cos(math.pi * progress)))
+
+        s = current_step - warmup_steps
+
+        if s < phase1_steps:
+            return math.exp(-alpha * s / phase1_steps)
+
+        s2 = s - phase1_steps
+        phase1_end_lr = math.exp(-alpha)
+        return phase1_end_lr * math.exp(-beta * s2 / phase2_steps)
+
     return LambdaLR(optimizer, lr_lambda)
 
 
@@ -204,7 +229,7 @@ def run_comparison():
         steps_per_epoch = (len(train_x) + batch_size - 1) // batch_size
         total_steps = steps_per_epoch * num_epochs
         warmup_steps = int(total_steps * warmup_ratio)
-        scheduler = get_cosine_schedule_with_warmup(optimizer, warmup_steps, total_steps)
+        scheduler = get_piecewise_exp_schedule_with_warmup(optimizer, warmup_steps, total_steps)
 
         train_losses = []
         val_losses = []

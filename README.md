@@ -1,6 +1,6 @@
 # ACX-Ramanujan-Transformer
 
-[![Version](https://img.shields.io/badge/version-1.1.0-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.3.1-blue)](CHANGELOG.md)
 [![Python](https://img.shields.io/badge/python-3.8+-green)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/pytorch-≥2.0.0-ee4c2c)](https://pytorch.org/)
 
@@ -14,7 +14,7 @@
 
 **基于拉马努金模函数递推关系的神经网络权重初始化方法**
 
-> **v1.1.0** — 新增线性 Warmup + 余弦衰减学习率调度器，训练脚本优化。详见 [CHANGELOG.md](CHANGELOG.md)
+> **v1.3.1** — 自适应 Attention 缩放 + 分段指数 LR 调度。详见 [CHANGELOG.md](CHANGELOG.md)
 
 ### 项目简介
 
@@ -160,7 +160,7 @@ MIT
 
 **Neural Network Weight Initialization Based on Ramanujan's Modular Function Recurrence Relation**
 
-> **v1.1.0** — Added linear warmup + cosine decay LR scheduler, training script optimizations. See [CHANGELOG.md](CHANGELOG.md)
+> **v1.3.1** — Adaptive attention scaling + piecewise exponential LR scheduler. See [CHANGELOG.md](CHANGELOG.md)
 
 ### Overview
 
@@ -306,7 +306,7 @@ MIT
 
 **Gewichtsinitialisierung für neuronale Netze auf Basis der Modulfunktion-Rekurrenzrelation von Ramanujan**
 
-> **v1.1.0** — Neuer Linear Warmup + Cosine Decay Lernraten-Scheduler, Optimierungen der Trainingsskripte. Siehe [CHANGELOG.md](CHANGELOG.md)
+> **v1.3.1** — Neuer adaptiver Attention-Scaling + stückweise exponentieller Lernraten-Scheduler. Siehe [CHANGELOG.md](CHANGELOG.md)
 
 ### Überblick
 
