@@ -1,6 +1,6 @@
 # ACX-Ramanujan-Transformer
 
-[![Version](https://img.shields.io/badge/version-1.4.0-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.5.0-blue)](CHANGELOG.md)
 [![Python](https://img.shields.io/badge/python-3.8+-green)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/pytorch-≥2.0.0-ee4c2c)](https://pytorch.org/)
 
@@ -14,7 +14,7 @@
 
 **基于拉马努金模函数递推关系的神经网络权重初始化方法**
 
-> **v1.4.0** — 核心算法增强 + 工程性能飞跃 + 易用性提升。详见 [CHANGELOG.md](CHANGELOG.md)
+> **v1.5.0** — 量化友好 + 自适应衰减 + QKV 差异化 + 长上下文 + 预定义配置。详见 [CHANGELOG.md](CHANGELOG.md)
 
 ### 项目简介
 
@@ -160,7 +160,7 @@ MIT
 
 **Neural Network Weight Initialization Based on Ramanujan's Modular Function Recurrence Relation**
 
-> **v1.4.0** — Core algorithm enhancements + engineering performance leap + usability improvements. See [CHANGELOG.md](CHANGELOG.md)
+> **v1.5.0** — Quantization-friendly + adaptive decay + QKV differentiation + long context + preset configs. See [CHANGELOG.md](CHANGELOG.md)
 
 ### Overview
 
@@ -306,7 +306,7 @@ MIT
 
 **Gewichtsinitialisierung für neuronale Netze auf Basis der Modulfunktion-Rekurrenzrelation von Ramanujan**
 
-> **v1.4.0** — Kern-Algorithmus-Verbesserungen + Engineering-Leistungssprung + Benutzerfreundlichkeitsverbesserungen. Siehe [CHANGELOG.md](CHANGELOG.md)
+> **v1.5.0** — Quantisierungsfreundlich + adaptiver Decay + QKV-Differenzierung + Langkontext + Konfigurationsvorlagen. Siehe [CHANGELOG.md](CHANGELOG.md)
 
 ### Überblick
 

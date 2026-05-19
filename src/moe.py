@@ -1,12 +1,14 @@
 """
-Mixture of Experts (MoE) 层
+Mixture of Experts (MoE) 层 (v1.5)
 
 集成拉马努金初始化的 MoE 实现：
-- Router 使用拉马努金初始化
+- Router 使用轻量拉马努金初始化 (gain=0.1)
 - 每个 Expert 是一个 FFN，独立使用拉马努金初始化
 - 支持 Top-K 路由、负载均衡损失
+- v1.5: 日志系统、Top-K 辅助损失修复
 """
 
+import logging
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -14,6 +16,8 @@ from typing import Optional, Tuple, Dict
 
 from .feedforward import RamanujanFFN
 from .ramanujan_initializer import RamanujanInitializer, LayerRole, tag_linear_role
+
+logger = logging.getLogger('acx_ramanujan')
 
 
 class RamanujanRouter(nn.Module):

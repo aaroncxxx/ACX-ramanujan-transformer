@@ -1,10 +1,11 @@
 """
-Transformer Block
+Transformer Block (v1.5)
 
 集成拉马努金初始化的完整 Transformer 编码器/解码器块。
-v1.4: 支持梯度检查点（gradient checkpointing）
+v1.5: 日志系统
 """
 
+import logging
 import torch
 import torch.nn as nn
 from typing import Optional
@@ -12,6 +13,8 @@ from typing import Optional
 from .attention import RamanujanMultiHeadAttention
 from .feedforward import RamanujanFFN
 from .ramanujan_initializer import RamanujanInitializer
+
+logger = logging.getLogger('acx_ramanujan')
 
 
 class RamanujanTransformerBlock(nn.Module):

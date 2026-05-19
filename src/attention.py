@@ -1,35 +1,38 @@
 """
-多头自注意力模块
+多头自注意力模块 (v1.5)
 
-集成拉马努金初始化 + 自适应缩放，确保注意力层在极深网络中保持梯度稳定。
+集成拉马努金初始化 + 自适应缩放 + QKV 差异化初始化。
 
 自适应缩放公式:
     scale(l, d_k) = sqrt(d_k) * (1 + alpha * exp(-lambda_decay * l))
 
-    - 浅层: 缩放更大 → logits 更小 → softmax 更平滑 → 注意力更分散
-    - 深层: 收敛到标准 sqrt(d_k) → softmax 更尖锐
-    - 与拉马努金系数的指数衰减行为一致
+QKV 差异化初始化:
+    - Q: 增益 × 1.05（增强查询信号）
+    - K: 标准增益
+    - V: 增益 × 0.95（稳定值信号）
 """
 
 import math
+import logging
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional, Tuple
 
-from .ramanujan_initializer import RamanujanInitializer
+from .ramanujan_initializer import RamanujanInitializer, LayerRole, tag_linear_role
+
+logger = logging.getLogger('acx_ramanujan')
 
 
 class RamanujanMultiHeadAttention(nn.Module):
     """
-    多头自注意力，支持拉马努金初始化 + 自适应缩放
+    多头自注意力，支持拉马努金初始化 + 自适应缩放 + QKV 差异化初始化
 
     标准 MHA:
         Q, K, V = xW_q, xW_k, xW_v
-        attn = softmax(QK^T / sqrt(d_k)) V
+        attn = softmax(QK^T / scale(l, d_k)) V
 
     自适应缩放:
-        attn = softmax(QK^T / scale(l, d_k)) V
         scale(l, d_k) = sqrt(d_k) * (1 + alpha * exp(-lambda_decay * l))
     """
 
@@ -37,14 +40,15 @@ class RamanujanMultiHeadAttention(nn.Module):
                  layer_idx: int = 0, initializer: Optional[RamanujanInitializer] = None,
                  alpha: float = 0.3, lambda_decay: float = 0.5):
         super().__init__()
-        assert d_model % nhead == 0, f"d_model ({d_model}) must be divisible by nhead ({nhead})"
+        if d_model % nhead != 0:
+            raise ValueError(f"d_model ({d_model}) must be divisible by nhead ({nhead})")
 
         self.d_model = d_model
         self.nhead = nhead
         self.d_k = d_model // nhead
         self.layer_idx = layer_idx
 
-        # 自适应缩放: scale(l) = sqrt(d_k) * (1 + alpha * exp(-lambda * l))
+        # 自适应缩放
         base_scale = math.sqrt(self.d_k)
         adaptive_factor = 1.0 + alpha * math.exp(-lambda_decay * layer_idx)
         self.scale = base_scale * adaptive_factor
@@ -55,14 +59,23 @@ class RamanujanMultiHeadAttention(nn.Module):
         self.W_v = nn.Linear(d_model, d_model, bias=False)
         self.W_o = nn.Linear(d_model, d_model, bias=False)
 
+        # QKV 差异化角色标签
+        tag_linear_role(self.W_q, LayerRole.Q_PROJ)
+        tag_linear_role(self.W_k, LayerRole.K_PROJ)
+        tag_linear_role(self.W_v, LayerRole.V_PROJ)
+        tag_linear_role(self.W_o, LayerRole.OUTPUT_ATTN)
+
         self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
 
-        # 拉马努金初始化
+        # 拉马努金初始化（QKV 差异化由 RamanujanInitializer._init_module 自动处理）
         if initializer is None:
             initializer = RamanujanInitializer(max_depth=1000)
 
         for linear in [self.W_q, self.W_k, self.W_v, self.W_o]:
             initializer.init_linear(linear, layer_idx, nonlinearity='linear')
+
+        logger.debug(f"Attention layer {layer_idx}: scale={self.scale:.4f} "
+                     f"(base={base_scale:.4f}, factor={adaptive_factor:.4f})")
 
     def forward(
         self,
@@ -72,18 +85,6 @@ class RamanujanMultiHeadAttention(nn.Module):
         attn_mask: Optional[torch.Tensor] = None,
         is_causal: bool = False,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        """
-        Args:
-            query: (B, T, D)
-            key: (B, S, D) or None (self-attention)
-            value: (B, S, D) or None (self-attention)
-            attn_mask: (T, S) or (B, T, S) or None
-            is_causal: 是否使用因果掩码
-
-        Returns:
-            output: (B, T, D)
-            attn_weights: (B, nhead, T, S) or None
-        """
         if key is None:
             key = query
         if value is None:
@@ -118,10 +119,7 @@ class RamanujanMultiHeadAttention(nn.Module):
         attn_weights = F.softmax(attn, dim=-1)
         attn_weights = self.dropout(attn_weights)
 
-        # 加权求和
         output = torch.matmul(attn_weights, V)
-
-        # 合并多头
         output = output.transpose(1, 2).reshape(B, T, self.d_model)
         output = self.W_o(output)
 

@@ -1,5 +1,44 @@
 # Changelog
 
+## v1.5.0 (2026-05-19)
+
+### 🔴 Core Algorithm (P1)
+
+- **量化友好初始化**: `QUANTIZATION_GAIN` 增益表 (INT8/FP8/INT4)，`build_ramanujan_transformer(quantization='int8')` 支持
+- **自适应权重衰减**: `get_adaptive_weight_decay(layer_idx, base_decay)`，浅层系数大→更强正则化，深层标准衰减
+- **QKV 差异化初始化**: Q 增益×1.05（增强查询）、K 标准、V 增益×0.95（稳定值），通过 `LayerRole` 标签自动分发
+- **长上下文方差保持**: `compute_rope_correction(seq_len)` RoPE 修正系数，>512 token 自动触发
+
+### 🟡 Ecosystem (P2)
+
+- **预定义配置**: `configs/gpt2_style.yaml`, `configs/llama_7b_style.yaml`, `configs/llama_13b_style.yaml`
+- **分级日志系统**: 所有核心模块添加 `logging.getLogger('acx_ramanujan')` 日志
+- **配置文件增强**: `configs/default.yaml` 新增 quantization/long_context/adaptive_weight_decay/logging 选项
+
+### 📝 API Changes
+
+- `RamanujanInitializer` 新增 `quantization`, `long_context_seq_len` 参数
+- `build_ramanujan_transformer()` 新增 `quantization`, `long_context_seq_len` 参数
+- `LayerRole` 新增 `Q_PROJ`, `K_PROJ`, `V_PROJ` 角色标签
+- `QUANTIZATION_GAIN` 量化增益表暴露为模块级常量
+- `get_adaptive_weight_decay()` 自适应衰减函数暴露为模块级函数
+- `compute_rope_correction()` RoPE 修正函数暴露为模块级函数
+
+### 🔧 改动文件
+
+- `src/ramanujan_initializer.py` — 量化增益、自适应衰减、RoPE 修正、日志
+- `src/attention.py` — QKV 差异化标签、日志
+- `src/feedforward.py` — FFN 角色标签、日志
+- `src/transformer_block.py` — 日志
+- `src/ramanujan_transformer.py` — 量化/长上下文参数透传、日志
+- `src/moe.py` — 日志
+- `configs/default.yaml` — 新增配置项
+- `configs/gpt2_style.yaml` — GPT-2 预定义配置
+- `configs/llama_7b_style.yaml` — 7B Llama 预定义配置
+- `configs/llama_13b_style.yaml` — 13B Llama 预定义配置
+
+---
+
 ## v1.4.0 (2026-05-19)
 
 ### 🔴 Core Algorithm (P0)

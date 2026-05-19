@@ -1,14 +1,17 @@
 """
-前馈网络模块 (FFN)
+前馈网络模块 (FFN) (v1.5)
 
-集成拉马努金初始化。
+集成拉马努金初始化 + 量化友好支持。
 """
 
+import logging
 import torch
 import torch.nn as nn
 from typing import Optional
 
-from .ramanujan_initializer import RamanujanInitializer
+from .ramanujan_initializer import RamanujanInitializer, LayerRole, tag_linear_role
+
+logger = logging.getLogger('acx_ramanujan')
 
 
 class RamanujanFFN(nn.Module):
@@ -35,6 +38,10 @@ class RamanujanFFN(nn.Module):
         self.linear1 = nn.Linear(d_model, dim_feedforward)
         # 第二层：压缩
         self.linear2 = nn.Linear(dim_feedforward, d_model)
+
+        # 角色标签
+        tag_linear_role(self.linear1, LayerRole.FFN_UP)
+        tag_linear_role(self.linear2, LayerRole.FFN_DOWN)
 
         self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
 

@@ -1,18 +1,20 @@
 """
-完整 Transformer 模型
+完整 Transformer 模型 (v1.5)
 
 支持编码器-only（BERT风格）和编码器-解码器（GPT风格）架构。
-v1.4: 支持梯度检查点、动态递推深度
+v1.5: 量化友好初始化、长上下文支持、自适应权重衰减
 """
 
+import logging
 import torch
 import torch.nn as nn
 from typing import Optional
-from functools import partial
 
 from .embeddings import RamanujanEmbeddings
 from .transformer_block import RamanujanTransformerBlock
 from .ramanujan_initializer import RamanujanInitializer, compute_optimal_depth
+
+logger = logging.getLogger('acx_ramanujan')
 
 
 class RamanujanTransformerEncoder(nn.Module):
@@ -32,14 +34,20 @@ class RamanujanTransformerEncoder(nn.Module):
                  max_len: int = 512,
                  max_depth: int = 1000,
                  alpha: float = 0.3, lambda_decay: float = 0.5,
-                 gradient_checkpointing: bool = False):
+                 gradient_checkpointing: bool = False,
+                 quantization: str = 'none',
+                 long_context_seq_len: int = 512):
         super().__init__()
 
         self.d_model = d_model
         self.num_layers = num_layers
         self.gradient_checkpointing = gradient_checkpointing
 
-        initializer = RamanujanInitializer(max_depth=max_depth, num_layers=num_layers)
+        initializer = RamanujanInitializer(
+            max_depth=max_depth, num_layers=num_layers,
+            quantization=quantization,
+            long_context_seq_len=long_context_seq_len
+        )
 
         # 嵌入
         self.embeddings = RamanujanEmbeddings(
@@ -100,14 +108,20 @@ class RamanujanTransformerDecoder(nn.Module):
                  max_len: int = 2048,
                  max_depth: int = 1000,
                  alpha: float = 0.3, lambda_decay: float = 0.5,
-                 gradient_checkpointing: bool = False):
+                 gradient_checkpointing: bool = False,
+                 quantization: str = 'none',
+                 long_context_seq_len: int = 2048):
         super().__init__()
 
         self.d_model = d_model
         self.num_layers = num_layers
         self.gradient_checkpointing = gradient_checkpointing
 
-        initializer = RamanujanInitializer(max_depth=max_depth, num_layers=num_layers)
+        initializer = RamanujanInitializer(
+            max_depth=max_depth, num_layers=num_layers,
+            quantization=quantization,
+            long_context_seq_len=long_context_seq_len
+        )
 
         # 嵌入
         self.embeddings = RamanujanEmbeddings(
@@ -203,9 +217,11 @@ def build_ramanujan_transformer(
     alpha: float = 0.3,
     lambda_decay: float = 0.5,
     gradient_checkpointing: bool = False,
+    quantization: str = 'none',
+    long_context_seq_len: int = 512,
 ) -> nn.Module:
     """
-    快速构建拉马努金 Transformer
+    快速构建拉马努金 Transformer (v1.5)
 
     Args:
         vocab_size: 词表大小
@@ -221,21 +237,26 @@ def build_ramanujan_transformer(
         alpha: 自适应缩放修正幅度 (默认 0.3)
         lambda_decay: 自适应缩放衰减速率 (默认 0.5)
         gradient_checkpointing: 启用梯度检查点以节省显存 (默认 False)
+        quantization: 量化精度 ('none', 'int8', 'fp8', 'int4')
+        long_context_seq_len: 长上下文序列长度 (用于 RoPE 方差修正)
 
     Returns:
         nn.Module: 完整的 Transformer 模型
     """
+    logger.info(f"构建 Transformer: vocab={vocab_size}, d={d_model}, "
+                f"layers={num_layers}, heads={nhead}, quantization={quantization}")
+
     if decoder_only:
         return RamanujanTransformerDecoder(
             vocab_size, d_model, nhead, num_layers,
             dim_feedforward, dropout, activation,
             max_len, max_depth, alpha, lambda_decay,
-            gradient_checkpointing
+            gradient_checkpointing, quantization, long_context_seq_len
         )
     else:
         return RamanujanTransformerEncoder(
             vocab_size, d_model, nhead, num_layers,
             dim_feedforward, dropout, activation,
             max_len, max_depth, alpha, lambda_decay,
-            gradient_checkpointing
+            gradient_checkpointing, quantization, long_context_seq_len
         )

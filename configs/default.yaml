@@ -1,5 +1,4 @@
-# ACX-Ramanujan-Transformer 默认配置
-# 用法: python -c "import yaml; cfg = yaml.safe_load(open('configs/default.yaml'))"
+# ACX-Ramanujan-Transformer 配置 (v1.5)
 
 model:
   vocab_size: 50257
@@ -14,12 +13,14 @@ model:
 
 # 拉马努金初始化参数
 ramanujan:
-  max_depth: 1000        # 系数表最大深度
+  max_depth: 1000
   ramanujan_depth: null   # null = 自动计算
-  transition_depth: null  # null = 自动计算
-  alpha: 0.3             # 自适应 attention 缩放修正幅度
-  lambda_decay: 0.5      # 自适应 attention 缩放衰减速率
+  transition_depth: null
+  alpha: 0.3
+  lambda_decay: 0.5
   gradient_checkpointing: false
+  quantization: none      # none / int8 / fp8 / int4
+  long_context_seq_len: 512  # >512 启用 RoPE 方差修正
 
 # 训练参数
 training:
@@ -27,20 +28,26 @@ training:
   batch_size: 32
   lr: 3.0e-4
   weight_decay: 0.01
+  adaptive_weight_decay: true  # 分层自适应权重衰减
   warmup_ratio: 0.1
   grad_clip: 1.0
   seed: 42
 
 # 数据
 data:
-  vocab_size: 1000       # 合成数据词表大小
+  vocab_size: 1000
   num_train_samples: 800
   num_val_samples: 200
   seq_len: 128
 
-# MoE 参数（仅 moe 配置使用）
+# MoE 参数
 moe:
   num_experts: 8
   top_k: 2
   capacity_factor: 1.25
   aux_loss_weight: 0.01
+
+# 日志
+logging:
+  level: INFO    # DEBUG / INFO / WARNING / ERROR
+  logger: none   # wandb / tensorboard / none
