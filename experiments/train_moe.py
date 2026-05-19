@@ -9,17 +9,29 @@ MoE Transformer 训练脚本
 """
 
 import sys
+import math
 import time
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from pathlib import Path
 from typing import Dict, List
+from torch.optim.lr_scheduler import LambdaLR
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.ramanujan_transformer import build_ramanujan_transformer
 from src.moe import build_ramanujan_moe_transformer
+
+
+def get_cosine_schedule_with_warmup(optimizer, warmup_steps: int, total_steps: int):
+    """线性 warmup + 余弦衰减"""
+    def lr_lambda(current_step: int) -> float:
+        if current_step < warmup_steps:
+            return float(current_step) / float(max(1, warmup_steps))
+        progress = float(current_step - warmup_steps) / float(max(1, total_steps - warmup_steps))
+        return max(0.0, 0.5 * (1.0 + math.cos(math.pi * progress)))
+    return LambdaLR(optimizer, lr_lambda)
 
 
 def generate_synthetic_data(vocab_size: int = 1000, num_samples: int = 1000,
@@ -31,6 +43,7 @@ def generate_synthetic_data(vocab_size: int = 1000, num_samples: int = 1000,
 
 def train_epoch(model: nn.Module, train_x: torch.Tensor, train_y: torch.Tensor,
                 optimizer: optim.Optimizer, criterion: nn.Module,
+                scheduler=None,
                 batch_size: int = 32, aux_loss_weight: float = 0.01,
                 is_moe: bool = False) -> Dict:
     """训练一个 epoch"""
@@ -65,6 +78,8 @@ def train_epoch(model: nn.Module, train_x: torch.Tensor, train_y: torch.Tensor,
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
+        if scheduler is not None:
+            scheduler.step()
 
         total_loss += ce_loss.item()
         num_batches += 1
@@ -128,6 +143,7 @@ def run_comparison():
     num_epochs = 30
     batch_size = 32
     lr = 3e-4
+    warmup_ratio = 0.1
     num_experts = 8
     top_k = 2
 
@@ -185,7 +201,10 @@ def run_comparison():
         print(f"{'='*40}")
 
         optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
-        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
+        steps_per_epoch = (len(train_x) + batch_size - 1) // batch_size
+        total_steps = steps_per_epoch * num_epochs
+        warmup_steps = int(total_steps * warmup_ratio)
+        scheduler = get_cosine_schedule_with_warmup(optimizer, warmup_steps, total_steps)
 
         train_losses = []
         val_losses = []
@@ -195,10 +214,9 @@ def run_comparison():
         for epoch in range(num_epochs):
             train_stats = train_epoch(
                 model, train_x, train_y, optimizer, criterion,
-                batch_size, aux_loss_weight=0.01, is_moe=is_moe,
+                scheduler, batch_size, aux_loss_weight=0.01, is_moe=is_moe,
             )
             val_loss = evaluate(model, val_x, val_y, criterion, batch_size, is_moe)
-            scheduler.step()
 
             train_losses.append(train_stats['loss'])
             val_losses.append(val_loss)

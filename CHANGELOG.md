@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.1.0 (2026-05-19)
+
+### 🆕 New Features
+
+- **学习率调度器升级**: 训练脚本从 epoch 级 `CosineAnnealingLR` 改为 step 级 **线性 Warmup + 余弦衰减**，适配深网络初期训练
+- **三语 README**: 新增德语（Deutsch）版本，README 现支持中文 / English / Deutsch
+
+### 📝 Changes
+
+- `train.py`: 新增 `get_cosine_schedule_with_warmup()`，默认 `warmup_ratio=0.1`
+- `train_moe.py`: 同步应用 warmup 调度器
+
+---
+
 ## v2.0.0 (2026-05-18)
 
 ### 🔴 Breaking Changes

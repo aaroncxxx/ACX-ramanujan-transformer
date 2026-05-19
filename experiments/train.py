@@ -5,14 +5,26 @@
 """
 
 import sys
+import math
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from pathlib import Path
+from torch.optim.lr_scheduler import LambdaLR
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.ramanujan_transformer import build_ramanujan_transformer
+
+
+def get_cosine_schedule_with_warmup(optimizer, warmup_steps: int, total_steps: int):
+    """线性 warmup + 余弦衰减"""
+    def lr_lambda(current_step: int) -> float:
+        if current_step < warmup_steps:
+            return float(current_step) / float(max(1, warmup_steps))
+        progress = float(current_step - warmup_steps) / float(max(1, total_steps - warmup_steps))
+        return max(0.0, 0.5 * (1.0 + math.cos(math.pi * progress)))
+    return LambdaLR(optimizer, lr_lambda)
 
 
 def generate_synthetic_data(vocab_size: int = 1000, num_samples: int = 1000,
@@ -23,17 +35,22 @@ def generate_synthetic_data(vocab_size: int = 1000, num_samples: int = 1000,
 
 
 def train(model: nn.Module, train_data, val_data, epochs: int = 20,
-          batch_size: int = 32, lr: float = 3e-4, device: str = 'cpu'):
+          batch_size: int = 32, lr: float = 3e-4, warmup_ratio: float = 0.1,
+          device: str = 'cpu'):
     """训练循环"""
     model = model.to(device)
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
     criterion = nn.CrossEntropyLoss()
 
     train_x, train_y = train_data
     val_x, val_y = val_data
 
+    total_steps = (len(train_x) // batch_size) * epochs
+    warmup_steps = int(total_steps * warmup_ratio)
+    scheduler = get_cosine_schedule_with_warmup(optimizer, warmup_steps, total_steps)
+
     best_val_loss = float('inf')
+    global_step = 0
 
     for epoch in range(epochs):
         model.train()
@@ -51,11 +68,11 @@ def train(model: nn.Module, train_data, val_data, epochs: int = 20,
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
+            scheduler.step()
+            global_step += 1
 
             total_loss += loss.item()
             num_batches += 1
-
-        scheduler.step()
 
         avg_train_loss = total_loss / num_batches
 
