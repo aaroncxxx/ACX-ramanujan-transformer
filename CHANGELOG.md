@@ -1,5 +1,54 @@
 # Changelog
 
+## v2.0.0 (2026-05-25)
+
+### 🔴 Core Algorithm (P0)
+
+- **高级初始化方法对比**: 新增 Fixup / SkipInit / DeepNet / Base Station 四种先进初始化方法的完整实现与对比实验
+- **GPT-2 真实模型验证**: 在 GPT-2 Small (124M) 架构上对比 Ramanujan vs Default vs Xavier vs He 初始化
+- **Llama 结构验证**: 在 Llama-style Transformer（Pre-RMSNorm + SwiGLU + RoPE + GQA）上验证
+
+### 🟡 Theory (P0)
+
+- **渐近收敛性分析**: 递推系数渐近界 $|a_n| = O(\pi^{2n}/(n!)^2)$，方差比收敛速率 $O(L^{-1+\epsilon})$
+- **随机矩阵理论**: Wigner 半圆律视角下的谱半径控制，Marchenko-Pastur 分布与 FFN 层，Tracy-Widom 波动分析
+- **谱范数分析**: 谱范数与 Lipschitz 常数的关系，与 LayerNorm 的谱解释对比
+- **参考文献扩充**: 新增 11 篇参考文献（随机矩阵、深层初始化、量子力学）
+
+### 🟢 Ecosystem (P1)
+
+- **PyPI 包 `acx-ramanujan`**: 一行代码集成任意 PyTorch 模型
+  - `patch_model(model)` — 自动检测层数、标记角色、应用初始化
+  - `quick_init(model, num_layers=24)` — 最简 API
+  - `patch_hf_model(model)` — HuggingFace 专用接口
+  - 自动识别 QKV/FFN/Router/LM Head 层角色
+- **实验框架重构**: `experiments/benchmark_advanced.py` — 统一的 7 种方法对比框架
+  - 方差保持性测试
+  - 梯度健康度测试（爆炸/消失比率）
+  - 训练收敛速度
+  - 深层可扩展性（12/24/48/96 层）
+
+### 📝 API Changes
+
+- `acx_ramanujan.patch_model()` — 新增一键初始化入口
+- `acx_ramanujan.quick_init()` — 快捷初始化
+- `acx_ramanujan.patch_hf_model()` — HuggingFace 集成
+- `acx_ramanujan.__version__` = '2.0.0'
+
+### 🔧 新增文件
+
+- `acx_ramanujan/` — PyPI 包目录
+  - `__init__.py` — 公开 API
+  - `src/patch.py` — patch_model / quick_init / patch_hf_model 实现
+- `experiments/benchmark_advanced.py` — 高级方法对比实验
+- `experiments/validate_gpt2.py` — GPT-2 验证
+- `experiments/validate_llama.py` — Llama 验证
+- `setup_pypi.py` — PyPI 打包脚本
+
+### 📚 文档更新
+
+- `docs/theory.md` 新增：渐近收敛性、随机矩阵理论、谱范数分析、量子力学联系扩展
+
 ## v1.5.0 (2026-05-19)
 
 ### 🔴 Core Algorithm (P1)
