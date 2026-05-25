@@ -119,14 +119,29 @@ class DeepNetInitializer:
         self.beta = (8.0 * num_layers) ** -0.25
 
     def apply(self, model: nn.Module):
+        """应用 DeepNet 初始化
+
+        β 只缩放残差分支的输出投影（每个 Block 的最后一个 Linear），
+        QKV / FFN 第一层使用标准 Xavier，不缩放。
+        """
+        # 收集所有 Block，对每个 Block 的输出层施加 β 缩放
         for module in model.modules():
             if isinstance(module, nn.Linear):
-                # 标准 Xavier 初始化
                 nn.init.xavier_uniform_(module.weight)
-                # β 缩放
-                module.weight.data *= self.beta
                 if module.bias is not None:
                     nn.init.zeros_(module.bias)
+
+        # 找到每个 TransformerBlock 的最后一个 Linear（残差分支输出），施加 β 缩放
+        for module in model.modules():
+            cls_name = module.__class__.__name__.lower()
+            if any(kw in cls_name for kw in ['block', 'layer', 'transformer']):
+                # 找到该 block 内最后一个 Linear
+                last_linear = None
+                for m in module.modules():
+                    if isinstance(m, nn.Linear):
+                        last_linear = m
+                if last_linear is not None:
+                    last_linear.weight.data *= self.beta
 
 
 class BaseStationInitializer:
@@ -145,12 +160,27 @@ class BaseStationInitializer:
         self.scale = 1.0 / math.sqrt(2.0 * num_layers)
 
     def apply(self, model: nn.Module):
+        """应用 Base Station 初始化
+
+        只缩放残差分支输出（每个 Block 的最后一个 Linear），
+        QKV / FFN 第一层使用标准 Xavier，不缩放。
+        """
         for module in model.modules():
             if isinstance(module, nn.Linear):
                 nn.init.xavier_uniform_(module.weight)
-                module.weight.data *= self.scale
                 if module.bias is not None:
                     nn.init.zeros_(module.bias)
+
+        # 找到每个 TransformerBlock 的最后一个 Linear，施加缩放
+        for module in model.modules():
+            cls_name = module.__class__.__name__.lower()
+            if any(kw in cls_name for kw in ['block', 'layer', 'transformer']):
+                last_linear = None
+                for m in module.modules():
+                    if isinstance(m, nn.Linear):
+                        last_linear = m
+                if last_linear is not None:
+                    last_linear.weight.data *= self.scale
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -289,7 +319,12 @@ def test_variance_preservation(method: str, num_layers: int,
     with torch.no_grad():
         logits = model(x)
 
-    input_var = torch.var(torch.randn(num_samples, 32, d_model)).item()
+    # 输入方差：用 embedding 后的实际表示来衡量
+    with torch.no_grad():
+        B, L = x.shape
+        pos = torch.arange(L, device=x.device).unsqueeze(0)
+        actual_input = model.embed(x) + model.pos_embed(pos)
+        input_var = torch.var(actual_input).item()
     output_var = torch.var(logits).item()
 
     # 逐层方差追踪

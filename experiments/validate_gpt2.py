@@ -181,7 +181,7 @@ def apply_he_init(model: GPT2):
 
 
 def apply_ramanujan_init(model: GPT2, quantization: str = 'none'):
-    """Ramanujan 初始化"""
+    """Ramanujan 初始化（处理权重绑定）"""
     from src.attention import tag_linear_role
     from src.ramanujan_initializer import LayerRole
 
@@ -192,13 +192,28 @@ def apply_ramanujan_init(model: GPT2, quantization: str = 'none'):
         tag_linear_role(block.mlp.c_fc, LayerRole.FFN_UP)
         tag_linear_role(block.mlp.c_proj, LayerRole.FFN_DOWN)
 
+    # lm_head 和 wte 共享权重，标记 lm_head 让初始化器跳过它
+    tag_linear_role(model.lm_head, LayerRole.LM_HEAD)
+
     initializer = RamanujanInitializer(
         num_layers=model.config.n_layer,
         nonlinearity='gelu',
         quantization=quantization,
     )
-    # LM Head 权重绑定，不重复初始化
+
+    # 先初始化所有模块
+    # 注意：lm_head 和 wte 共享权重，需要先解除绑定再分别初始化
+    # 或者：跳过 lm_head，让 wte 的 Embedding 初始化覆盖
+    tied_weight = model.lm_head.weight is model.wte.weight
+    if tied_weight:
+        # 临时解除绑定：给 lm_head 一个独立的权重占位
+        model.lm_head.weight = nn.Parameter(model.lm_head.weight.data.clone())
+
     initializer.apply(model)
+
+    # 恢复绑定：用 wte 的权重替换 lm_head
+    if tied_weight:
+        model.lm_head.weight = model.wte.weight
 
 
 INIT_METHODS = {

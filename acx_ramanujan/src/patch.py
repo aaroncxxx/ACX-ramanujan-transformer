@@ -74,8 +74,21 @@ def _auto_tag_roles(model: nn.Module):
 
         name_lower = name.lower()
 
+        # FFN 相关（先检查 FFN，因为某些命名如 c_proj 在 attn 和 FFN 中都出现）
+        if any(kw in name_lower for kw in ['fc1', 'up_proj', 'gate_proj', 'w1']):
+            tag_linear_role(module, LayerRole.FFN_UP)
+        elif any(kw in name_lower for kw in ['fc2', 'down_proj', 'w2']):
+            tag_linear_role(module, LayerRole.FFN_DOWN)
+        # GPT-2 风格: mlp.c_proj 是 FFN down，attn.c_proj 是 attention output
+        elif 'c_proj' in name_lower:
+            if 'mlp' in name_lower or 'ffn' in name_lower:
+                tag_linear_role(module, LayerRole.FFN_DOWN)
+            else:
+                tag_linear_role(module, LayerRole.OUTPUT_ATTN)
+        elif 'c_fc' in name_lower:
+            tag_linear_role(module, LayerRole.FFN_UP)
         # Attention 相关
-        if any(kw in name_lower for kw in ['q_proj', 'query', 'c_attn']):
+        elif any(kw in name_lower for kw in ['q_proj', 'query', 'c_attn']):
             if 'q_proj' in name_lower or 'query' in name_lower:
                 tag_linear_role(module, LayerRole.Q_PROJ)
             else:
@@ -84,22 +97,14 @@ def _auto_tag_roles(model: nn.Module):
             tag_linear_role(module, LayerRole.K_PROJ)
         elif any(kw in name_lower for kw in ['v_proj', 'value']):
             tag_linear_role(module, LayerRole.V_PROJ)
-        elif any(kw in name_lower for kw in ['out_proj', 'c_proj', 'o_proj']):
+        elif any(kw in name_lower for kw in ['out_proj', 'o_proj']):
             tag_linear_role(module, LayerRole.OUTPUT_ATTN)
-        # FFN 相关
-        elif any(kw in name_lower for kw in ['fc1', 'up_proj', 'gate_proj', 'w1', 'c_fc']):
-            tag_linear_role(module, LayerRole.FFN_UP)
-        elif any(kw in name_lower for kw in ['fc2', 'down_proj', 'w2', 'c_proj']):
-            # 避免和 attention 的 c_proj 冲突
-            if 'attn' not in name_lower and 'attention' not in name_lower:
-                tag_linear_role(module, LayerRole.FFN_DOWN)
         # LM Head
         elif any(kw in name_lower for kw in ['lm_head', 'output_projection', 'cls']):
             tag_linear_role(module, LayerRole.LM_HEAD)
         # Router (MoE)
         elif any(kw in name_lower for kw in ['router', 'gate']):
             tag_linear_role(module, LayerRole.ROUTER)
-        # Embedding（非 Linear，单独处理）
 
 
 def patch_model(model: nn.Module,
